@@ -32,7 +32,6 @@ const phoneModels: PhoneModels = {
 };
 
 // --- Zod Schema for Validation ---
-// The Zod schema remains the same, as it only validates runtime structure, not compile-time types
 const orderSchema = z.object({
   name: z.string().min(2, { message: 'Full name must be at least 2 characters' }),
   mobile: z.string().min(10, { message: 'Please enter a valid mobile number' }),
@@ -52,15 +51,14 @@ function OrderForm() {
     accessories: ''
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'copied'>('idle');
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
+    setSubmissionStatus('idle'); // Reset message when user changes form
 
-    // Special handling for brand change to reset the model
     if (name === 'brand') {
-      // Cast the value to Brand | '' here to satisfy TypeScript when updating the state
       const newBrand = value as Brand | '';
-
         setFormData(prev => ({
             ...prev,
             brand: newBrand,
@@ -88,29 +86,11 @@ function OrderForm() {
     }
   };
 
-  const formatWhatsAppMessage = () => {
-    // Start with "Hi" to help with accounts that block long first messages.
-    let message = `Hi\n\n` +
-                  `*New Order Request*\n\n` +
-                  `*Name:* ${formData.name}\n` +
-                  `*Mobile:* ${formData.mobile}\n` +
-                  `*Brand:* ${formData.brand}\n` +
-                  `*Model:* ${formData.model}`;
-
-    if (formData.accessories) {
-      message += `\n\n*Accessories:*\n${formData.accessories}`;
-    }
-
-    // encodeURIComponent handles all special characters correctly.
-    return encodeURIComponent(message);
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({}); // Clear previous errors
+    setSubmissionStatus('idle');
 
-    // Validate form data with Zod
-    // Need to cast the formData brand to string for Zod validation since Zod schema uses string
     const result = orderSchema.safeParse(formData);
     if (!result.success) {
       const fieldErrors: Record<string, string> = {};
@@ -123,11 +103,47 @@ function OrderForm() {
       return;
     }
     
-    const whatsappNumber = "+923152561004";
-    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${formatWhatsAppMessage()}`;
+    const fullOrderMessage = `*New Order Request*\n\n` +
+                             `*Name:* ${formData.name}\n` +
+                             `*Mobile:* ${formData.mobile}\n` +
+                             `*Brand:* ${formData.brand}\n` +
+                             `*Model:* ${formData.model}` +
+                             (formData.accessories ? `\n\n*Accessories:*\n${formData.accessories}` : '');
+
+    const whatsappNumber = "923152561004";
+    let whatsappUrl = '';
+
+    // **NEW**: Detect if the user is on a mobile device
+    const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+
+    if (isMobile) {
+        // On mobile, pre-fill the entire message directly
+        const encodedMessage = encodeURIComponent(fullOrderMessage);
+        whatsappUrl = `https://api.whatsapp.com/send?phone=${whatsappNumber}&text=${encodedMessage}`;
+    } else {
+        // On desktop, use the copy-paste method as a reliable fallback
+        const textArea = document.createElement("textarea");
+        textArea.value = fullOrderMessage;
+        textArea.style.position = 'fixed';
+        textArea.style.top = '-9999px';
+        textArea.style.left = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+            document.execCommand('copy');
+        } catch (err) {
+            console.error('Unable to copy order details', err);
+        }
+        document.body.removeChild(textArea);
+
+        // Create a URL with ONLY the phone number for desktop
+        whatsappUrl = `https://api.whatsapp.com/send?phone=${whatsappNumber}`;
+        setSubmissionStatus('copied');
+    }
     
-    // Safely open the URL in a new window/tab
-    window.open(whatsappUrl, '_blank');
+    // Open WhatsApp
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -135,7 +151,6 @@ function OrderForm() {
         <div className="p-8">
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-3xl font-bold text-orange-500">Order Now</h1>
-            {/* Using a regular link for back navigation */}
             <a href="#" className="text-orange-500 hover:text-orange-700 font-medium text-sm">
               ← Back
             </a>
@@ -197,7 +212,6 @@ function OrderForm() {
                     className={`w-full px-4 py-3 border rounded-lg outline-none transition text-black focus:ring-2 ${errors.model ? 'border-red-500 ring-red-300' : 'border-gray-300 focus:border-orange-400 focus:ring-orange-300'} disabled:bg-gray-100 disabled:cursor-not-allowed`}
                   >
                     <option value="">Select Model</option>
-                    {/* This line is now safe due to the OrderFormData typing and the preceding truthy check */}
                     {formData.brand && phoneModels[formData.brand].map(modelName => (
                         <option key={modelName} value={modelName}>{modelName}</option>
                     ))}
@@ -225,6 +239,13 @@ function OrderForm() {
             >
               Send Order to WhatsApp
             </button>
+
+            {submissionStatus === 'copied' && (
+                <div className="mt-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-center" role="alert">
+                    <p className="font-bold">Success! Your order is copied.</p>
+                    <p className="text-sm">WhatsApp will open. Please paste the copied details into the chat to send your order.</p>
+                </div>
+            )}
           </form>
         </div>
     </div>
